@@ -1,5 +1,6 @@
 #include <stdio.h>
 #include <string>
+#include <fstream>
 #include <julius/juliuslib.h>
 #include <sent/adin.h>
 
@@ -31,7 +32,12 @@ int startupJulius()
 	argv[7] = new char[64];
 	strcpy(argv[7], "-v");
 	argv[8] = new char[64];
-	strcpy(argv[8], "../../bccwj.60k.pdp_new.htkdic");
+	std::ifstream ifs("../../bccwj.60k.pdp_new.htkdic");
+	if (ifs.is_open()) {	// ファイルの有無
+		strcpy(argv[8], "../../bccwj.60k.pdp_new.htkdic");
+	} else {
+		strcpy(argv[8], "../../dictation-kit-v4.4/model/lang_m/bccwj.60k.pdp.htkdic");
+	}
 	argv[9] = new char[64];
 	strcpy(argv[9], "-input");
 	argv[10] = new char[64];

@@ -9,6 +9,8 @@
 
 #include <julius/juliuslib.h>
 
+#define API_GOOGLE 1
+
 typedef struct {
 	char *speech;
 	int speechNum;
@@ -18,6 +20,9 @@ static std::list<StructSpeech> speechs;
 static int fileCount = 1;
 static std::string fileCountAlphabet = "a";
 static std::string baseHtsVoice = "";
+
+static int apiMode = 0;
+static std::string apiKey;
 
 void segmentAndRefresh()
 {
@@ -150,30 +155,138 @@ static void recordSampleResult(Recog *recog, void *dummy)
 
 	fclose(rawFp);
 
-	int frameshift = recog->jconf->input.frameshift;
-
 	std::string sentStr = "";
 
-	for (RecogProcess *r = recog->process_list; r; r = r->next) {
+	switch (apiMode) {
+		case API_GOOGLE:
+			{
+				remove("tmp.json.result");
+				remove("tmp.result");
+				remove("tmp.json");
+				remove("tmp.base64");
+				remove("tmp.flac");
+				remove("tmp.wav");
 
-		if (!r->live) {
-			continue;
-		}
+				char apiCommand[MAXLINELEN];
+				snprintf(apiCommand, MAXLINELEN, "sox -r 16k -e signed-integer -b 16 -B \"%s\" --bits 16 --channels 1 --rate 16000 tmp.wav", rawFilePath);
+				system(apiCommand);
+				system("flac -V tmp.wav 2> /dev/null");
+				system("base64 tmp.flac > tmp.base64");
 
-		if (r->result.status < 0) {
-			continue;
-		}
+				struct stat stbuf;
+				int fd = open("tmp.base64", O_RDONLY);
+				if (fstat(fd, &stbuf) == -1) {
+					remove("tmp.base64");
+					remove("tmp.flac");
+					remove("tmp.wav");
+					break;
+				}
+				int fileSize = stbuf.st_size;
+				char *base64Data = new char[fileSize];
+				FILE *base64Fp = fopen("tmp.base64", "r");
+				if (base64Fp == NULL) {
+					remove("tmp.base64");
+					remove("tmp.flac");
+					remove("tmp.wav");
+					break;
+				}
+				char *base64Pos = base64Data;
+				while (fgets(base64Pos, fileSize, base64Fp) != NULL) {
+					base64Pos += strlen(base64Pos) - 1;
+					base64Pos[0] = '\0';
+				}
+				fclose(base64Fp);
 
-		WORD_INFO *winfo = r->lm->winfo;
-		for (int n = 0; n < r->result.sentnum; n++) {
-			Sentence *s = &(r->result.sent[n]);
-			WORD_ID *seq = s->word;
-			int seqnum = s->word_num;
+				FILE *apiFp = fopen("tmp.json", "w");
+				if (apiFp == NULL) {
+					remove("tmp.base64");
+					remove("tmp.flac");
+					remove("tmp.wav");
+					break;
+				}
+				fputs("{\n", apiFp);
+				fputs("    \"config\": {\n", apiFp);
+				fputs("        \"encoding\": \"FLAC\",\n", apiFp);
+				fputs("        \"sampleRateHertz\": 16000,\n", apiFp);
+				fputs("        \"languageCode\": \"ja-JP\"\n", apiFp);
+				fputs("    },\n", apiFp);
+				fputs("    \"audio\": {\n", apiFp);
+				fputs("        \"content\": \"", apiFp);
+				fputs(base64Data, apiFp);
+				fputs("\"\n", apiFp);
+				fputs("    }\n", apiFp);
+				fputs("}\n", apiFp);
+				fclose(apiFp);
 
-			for (int i = 0; i < seqnum; i++) {
-				sentStr += winfo->woutput[seq[i]];
+				delete[] base64Data;
+
+				snprintf(apiCommand, MAXLINELEN, "curl -s -X POST -H \"Content-Type: application/json\" --data-binary @tmp.json \"https://speech.googleapis.com/v1/speech:recognize?key=%s\" > tmp.json.result", apiKey.c_str());
+				system(apiCommand);
+				system("cat tmp.json.result | jq -r \".results[0].alternatives[0].transcript\" > tmp.result");
+ 
+				fd = open("tmp.result", O_RDONLY);
+				if (fstat(fd, &stbuf) == -1) {
+					remove("tmp.json.result");
+					remove("tmp.result");
+					remove("tmp.json");
+					remove("tmp.base64");
+					remove("tmp.flac");
+					remove("tmp.wav");
+					break;
+				}
+				fileSize = stbuf.st_size;
+				char *resultData = new char[fileSize];
+				FILE *resultFp = fopen("tmp.result", "r");
+				if (resultFp == NULL) {
+					remove("tmp.json.result");
+					remove("tmp.result");
+					remove("tmp.json");
+					remove("tmp.base64");
+					remove("tmp.flac");
+					remove("tmp.wav");
+					break;
+				}
+				fgets(resultData, fileSize, resultFp);
+				fclose(resultFp);
+
+				sentStr = std::string(resultData);
+				if (sentStr == "null") {
+					sentStr = "";
+				}
+
+				delete[] resultData;
+
+				remove("tmp.json.result");
+				remove("tmp.result");
+				remove("tmp.json");
+				remove("tmp.base64");
+				remove("tmp.flac");
+				remove("tmp.wav");
 			}
-		}
+			break;
+		default:
+			for (RecogProcess *r = recog->process_list; r; r = r->next) {
+	
+				if (!r->live) {
+					continue;
+				}
+
+				if (r->result.status < 0) {
+					continue;
+				}
+
+				WORD_INFO *winfo = r->lm->winfo;
+				for (int n = 0; n < r->result.sentnum; n++) {
+					Sentence *s = &(r->result.sent[n]);
+					WORD_ID *seq = s->word;
+					int seqnum = s->word_num;
+		
+					for (int i = 0; i < seqnum; i++) {
+						sentStr += winfo->woutput[seq[i]];
+					}
+				}
+			}
+			break;
 	}
 
 	if (sentStr == "") {
@@ -332,4 +445,10 @@ void recordAndSplitSetUp(Recog *recog)
 void setBaseHtsVoice(std::string htsVoice)
 {
 	baseHtsVoice = htsVoice;
+}
+
+void setApi(int api, std::string key)
+{
+	apiMode = api;
+	apiKey = key;
 }
