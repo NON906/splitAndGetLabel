@@ -19,10 +19,11 @@ typedef struct {
 static std::list<StructSpeech> speechs;
 static int fileCount = 1;
 static std::string fileCountAlphabet = "a";
-static std::string baseHtsVoice = "";
 
 static int apiMode = 0;
 static std::string apiKey;
+
+static std::string options = "";
 
 void segmentAndRefresh()
 {
@@ -182,6 +183,7 @@ static void recordSampleResult(Recog *recog, void *dummy)
 					break;
 				}
 				int fileSize = stbuf.st_size;
+				close(fd);
 				char *base64Data = new char[fileSize];
 				FILE *base64Fp = fopen("tmp.base64", "r");
 				if (base64Fp == NULL) {
@@ -235,6 +237,7 @@ static void recordSampleResult(Recog *recog, void *dummy)
 					break;
 				}
 				fileSize = stbuf.st_size;
+				close(fd);
 				char *resultData = new char[fileSize];
 				FILE *resultFp = fopen("tmp.result", "r");
 				if (resultFp == NULL) {
@@ -294,7 +297,7 @@ static void recordSampleResult(Recog *recog, void *dummy)
 		return;
 	}
 
-	system(("echo \"" + sentStr + "\" | ../../open_jtalk/bin/open_jtalk -x ../../open_jtalk/dic/ -m \"" + baseHtsVoice + "\" -ot tmp.txt 2> /dev/null").c_str());
+	system(("echo \"" + sentStr + "\" | ../../open_jtalk/bin/open_jtalk -x ../../open_jtalk/dic/ " + options + " -ot tmp.txt 2> /dev/null").c_str());
 
 	FILE *logFp = fopen("tmp.txt", "r");
 	if (logFp == NULL) {
@@ -442,13 +445,13 @@ void recordAndSplitSetUp(Recog *recog)
 	callback_add(recog, CALLBACK_RESULT, recordSampleResult, NULL);
 }
 
-void setBaseHtsVoice(std::string htsVoice)
-{
-	baseHtsVoice = htsVoice;
-}
-
 void setApi(int api, std::string key)
 {
 	apiMode = api;
 	apiKey = key;
+}
+
+void addOptions(std::string opt, std::string val)
+{
+	options += " " + opt + " " + val + " ";
 }
